@@ -23,8 +23,8 @@ return [
     ],
 
     'onopay' => [
-        'web_url' => env('ONOPAY_WEB_URL', 'http://onopay.web.id'),
-        'api_url' => env('ONOPAY_API_URL', 'http://onopay.web.id/api/v1'),
+        'web_url' => env('ONOPAY_WEB_URL', 'https://onopay.web.id'),
+        'api_url' => env('ONOPAY_API_URL', 'https://onopay.web.id/api/v1'),
         'api_key' => env('ONOPAY_API_KEY'),
         'merchant_phone' => env('ONOPAY_MERCHANT_PHONE'),
         'merchant_code' => env('ONOPAY_MERCHANT_CODE', 'SMILEDENTAL'),

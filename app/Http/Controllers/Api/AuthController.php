@@ -89,6 +89,27 @@ class AuthController extends Controller
         ], 201);
     }
 
+    public function me(Request $request)
+    {
+        $user = $request->user();
+        $patient = $this->patientFor($user);
+
+        return response()->json([
+            'status' => true,
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role' => $user->role,
+            ],
+            'patient' => $patient ? [
+                'id' => $patient->id,
+                'nama' => $patient->nama,
+                'no_hp' => $patient->no_hp,
+            ] : null,
+        ]);
+    }
+
     public function logout(Request $request)
     {
         $request->user()?->currentAccessToken()?->delete();
