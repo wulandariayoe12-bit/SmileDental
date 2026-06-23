@@ -79,29 +79,4 @@ class PatientController extends Controller
 
         return redirect('/patients');
     }
-
-    // PROFILE
-    public function profile($id)
-    {
-        $patient = DB::table('pasien')
-            ->where('id', $id)
-            ->first();
-
-        abort_if(!$patient, 404);
-
-        $records = DB::table('rekam_medis')
-            ->leftJoin('dokter', 'rekam_medis.doctor_id', '=', 'dokter.id')
-            ->where('rekam_medis.patient_id', $id)
-            ->select(
-                'rekam_medis.*',
-                'dokter.nama as nama_dokter'
-            )
-            ->orderByDesc('tanggal')
-            ->get();
-
-        return view('pages.profile', compact(
-            'patient',
-            'records'
-        ));
-    }
 }
