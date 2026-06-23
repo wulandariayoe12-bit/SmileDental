@@ -210,5 +210,7 @@ Route::middleware(EnsureUserIsLoggedIn::class)->group(function () {
     Route::get('/schedules/edit/{id}', [ScheduleController::class, 'edit']);
     Route::post('/schedules/update/{id}', [ScheduleController::class, 'update']);
     Route::delete('/schedules/{id}', [ScheduleController::class, 'destroy']);
-    Route::get('/profile/{id}', [PatientController::class, 'profile']);
+
+    // PROFIL PASIEN
+    Route::get('/profile/{id}', [PatientController::class, 'profile'])->name('profile');
 });
