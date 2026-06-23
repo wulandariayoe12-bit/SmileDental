@@ -318,76 +318,101 @@ class PatientAppController extends Controller
             $payment,
             $request->user()->name
         );
-        $onopayPayment = null;
 
-        if ($merchantPhone !== '') {
-            try {
-                $onopayPayment = $this->onoPay->payByQr(
-                    $merchantPhone,
-                    $patientPhone,
-                    $amount,
-                    'Pembayaran SmileDental appointment #' . $appointmentId
-                );
-            } catch (Throwable) {
-                $onopayPayment = null;
-            }
+        if ($merchantPhone === '') {
+            throw ValidationException::withMessages([
+                'onopay' => 'Nomor merchant OnoPay belum dikonfigurasi.',
+            ]);
+        }
+
+        \Log::info('ONOPAY PAYMENT REQUEST', [
+            'merchant_phone' => $merchantPhone,
+            'patient_phone' => $patientPhone,
+            'amount' => $amount,
+        ]);
+
+        $onopayPayment = $this->onoPay->payByQr(
+            $merchantPhone,
+            $patientPhone,
+            $amount,
+            'Pembayaran SmileDental appointment #' . $appointmentId
+        );
+
+        \Log::info('ONOPAY PAYMENT RESPONSE', [
+            'response' => $onopayPayment,
+        ]);
+
+        if (! data_get($onopayPayment, 'success')) {
+            throw ValidationException::withMessages([
+                'onopay' => data_get(
+                    $onopayPayment,
+                    'message',
+                    'Pembayaran OnoPay gagal.'
+                ),
+            ]);
+        }
+
+        if (! $onopayPayment) {
+            throw ValidationException::withMessages([
+                'onopay' => 'Transaksi OnoPay gagal diproses.',
+            ]);
         }
 
         try {
             DB::transaction(function () use ($patientId, $appointmentId, $payment, $amount, $onopayPayment, $paymentInstruction) {
-            $payment = DB::table('pembayaran')
-                ->where('id', $payment->id)
-                ->lockForUpdate()
-                ->first();
+                $payment = DB::table('pembayaran')
+                    ->where('id', $payment->id)
+                    ->lockForUpdate()
+                    ->first();
 
-            abort_if(! $payment, 404);
+                abort_if(! $payment, 404);
 
-            if ($payment->status === 'lunas') {
-                return;
-            }
+                if ($payment->status === 'lunas') {
+                    return;
+                }
 
-            $wallet = $this->walletFor($patientId, true);
-            $currentBalance = (int) $wallet->balance;
+                $wallet = $this->walletFor($patientId, true);
+                $currentBalance = (int) $wallet->balance;
 
-            if ($currentBalance < $amount) {
-                throw ValidationException::withMessages([
-                    'balance' => 'Saldo OnoPay tidak cukup untuk membayar tagihan ini.',
-                ]);
-            }
+                if ($currentBalance < $amount) {
+                    throw ValidationException::withMessages([
+                        'balance' => 'Saldo OnoPay tidak cukup untuk membayar tagihan ini.',
+                    ]);
+                }
 
-            $newBalance = (int) data_get($onopayPayment, 'data.payer_new_balance', $currentBalance - $amount);
+                $newBalance = (int) data_get($onopayPayment, 'data.payer_new_balance', $currentBalance - $amount);
 
-            DB::table('patient_wallets')
-                ->where('id', $wallet->id)
-                ->update([
-                    'balance' => $newBalance,
+                DB::table('patient_wallets')
+                    ->where('id', $wallet->id)
+                    ->update([
+                        'balance' => $newBalance,
+                        'updated_at' => now(),
+                    ]);
+
+                DB::table('wallet_transactions')->insert([
+                    'patient_id' => $patientId,
+                    'appointment_id' => $appointmentId,
+                    'type' => 'payment',
+                    'provider' => 'OnoPay',
+                    'amount' => $amount,
+                    'status' => 'success',
+                    'reference' => (string) data_get($onopayPayment, 'data.transaction_id', $this->walletReference('PAY', $patientId)),
+                    'qris_payload' => $paymentInstruction['qris_payload'] ?? null,
+                    'qris_image_url' => $paymentInstruction['qris_image_url'] ?? null,
+                    'notes' => $onopayPayment
+                        ? 'Pembayaran appointment dari saldo OnoPay web'
+                        : 'Pembayaran appointment dari saldo OnoPay lokal',
+                    'created_at' => now(),
                     'updated_at' => now(),
                 ]);
 
-            DB::table('wallet_transactions')->insert([
-                'patient_id' => $patientId,
-                'appointment_id' => $appointmentId,
-                'type' => 'payment',
-                'provider' => 'OnoPay',
-                'amount' => $amount,
-                'status' => 'success',
-                'reference' => (string) data_get($onopayPayment, 'data.transaction_id', $this->walletReference('PAY', $patientId)),
-                'qris_payload' => $paymentInstruction['qris_payload'] ?? null,
-                'qris_image_url' => $paymentInstruction['qris_image_url'] ?? null,
-                'notes' => $onopayPayment
-                    ? 'Pembayaran appointment dari saldo OnoPay web'
-                    : 'Pembayaran appointment dari saldo OnoPay lokal',
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-
-            DB::table('pembayaran')
-                ->where('id', $payment->id)
-                ->update([
-                    'status' => 'lunas',
-                    'metode_pembayaran' => 'Saldo OnoPay',
-                    'updated_at' => now(),
-                ]);
+                DB::table('pembayaran')
+                    ->where('id', $payment->id)
+                    ->update([
+                        'status' => 'lunas',
+                        'metode_pembayaran' => 'Saldo OnoPay',
+                        'updated_at' => now(),
+                    ]);
             });
         } catch (ValidationException $error) {
             throw $error;
@@ -498,14 +523,15 @@ class PatientAppController extends Controller
             ->where('rekam_medis.patient_id', $patientId)
             ->select(
                 'rekam_medis.id',
+                'rekam_medis.patient_id',
                 'rekam_medis.appointment_id',
                 'rekam_medis.diagnosa',
                 'rekam_medis.tindakan',
                 'rekam_medis.catatan',
                 'rekam_medis.tanggal',
-                'dokter.nama as nama_dokter'
+                'dokter.nama as doctor_name'
             )
-            ->latest('rekam_medis.tanggal')
+            ->orderByDesc('rekam_medis.tanggal')
             ->get();
 
         return response()->json([
